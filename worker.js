@@ -44,19 +44,17 @@ async function getToken(env) {
 }
 
 function mapToMusicFree(tracks) {
-  return tracks.map(track => {
-    return {
-      id: track.id.toString(),
-      name: track.title || "Unknown",
-      artist: track.user?.username || "Unknown",
-      album: track.publisher_metadata?.album_title || "",
-      pic: track.artwork_url
-        ? track.artwork_url.replace("-large", "-t500x500")
-        : track.user?.avatar_url || "",
-      url: track.permalink_url,
-      source: "soundcloud"
-    };
-  });
+  return tracks.map(track => ({
+    id: track.id.toString(),
+    name: track.title || "Unknown",
+    artist: track.user?.username || "Unknown",
+    album: track.publisher_metadata?.album_title || "",
+    pic: track.artwork_url
+      ? track.artwork_url.replace("-large", "-t500x500")
+      : track.user?.avatar_url || "",
+    url: track.permalink_url,
+    source: "soundcloud"
+  }));
 }
 
 export default {
@@ -65,19 +63,25 @@ export default {
 
     if (url.pathname === "/search") {
       const q = url.searchParams.get("q");
-      const limit = url.searchParams.get("limit") || 20;
-
       if (!q) {
-        return new Response(JSON.stringify({
-          code: 400,
-          message: "missing q"
-        }), { status: 400 });
+        return new Response(JSON.stringify({ code: 400, message: "missing q" }), { status: 400 });
+      }
+
+      // 分页参数
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || url.searchParams.get("pageSize") || 20), 50);
+      let offset;
+
+      if (url.searchParams.has("offset")) {
+        offset = Math.max(parseInt(url.searchParams.get("offset")), 0);
+      } else {
+        const page = Math.max(parseInt(url.searchParams.get("page") || 1), 1);
+        offset = (page - 1) * limit;
       }
 
       const tokenInfo = await getToken(env);
 
       const scRes = await fetch(
-        `https://api.soundcloud.com/tracks?q=${encodeURIComponent(q)}&limit=${limit}`,
+        `https://api.soundcloud.com/tracks?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
         {
           headers: {
             "Authorization": `Bearer ${tokenInfo.access_token}`
@@ -86,15 +90,22 @@ export default {
       );
 
       const scData = await scRes.json();
-
-      const mapped = mapToMusicFree(scData);
+      const list = mapToMusicFree(scData);
 
       return new Response(JSON.stringify({
         code: 200,
-        token_cached: tokenInfo.cached,
-        token_fetched_time: formatTime(tokenInfo.fetched_at),
-        token_fetched_timestamp: tokenInfo.fetched_at,
-        list: mapped
+        query: q,
+        pagination: {
+          limit,
+          offset,
+          next_offset: offset + limit
+        },
+        token: {
+          cached: tokenInfo.cached,
+          fetched_time: formatTime(tokenInfo.fetched_at),
+          fetched_timestamp: tokenInfo.fetched_at
+        },
+        list
       }), {
         headers: {
           "Content-Type": "application/json",
